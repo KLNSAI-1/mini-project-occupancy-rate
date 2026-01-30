@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: occupancy-container
-        image: registrykln.azurecr.io/occupancy-app:latest
+        image: registrykln.azurecr.io/occupancy-project:v1
         ports:
         - containerPort: 5000
 ---
