@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: occupancy-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: occupancy-app
+  template:
+    metadata:
+      labels:
+        app: occupancy-app
+    spec:
+      containers:
+      - name: occupancy-container
+        image: registrykln.azurecr.io/occupancy-app:latest
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: occupancy-service
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 5000
+  selector:
+    app: occupancy-app
