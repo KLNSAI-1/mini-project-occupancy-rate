@@ -1,9 +1,75 @@
+# =========================
+# Service Account
+# =========================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: occupancy-sa
+
+---
+# =========================
+# RBAC (Least Privilege)
+# =========================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: occupancy-role
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: occupancy-rb
+subjects:
+- kind: ServiceAccount
+  name: occupancy-sa
+roleRef:
+  kind: Role
+  name: occupancy-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# =========================
+# ConfigMap
+# =========================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: occupancy-config
+data:
+  APP_ENV: "production"
+
+---
+# =========================
+# Secret
+# =========================
+apiVersion: v1
+kind: Secret
+metadata:
+  name: occupancy-secret
+type: Opaque
+stringData:
+  DB_PASSWORD: "replace-me"
+
+---
+# =========================
+# Deployment
+# =========================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: occupancy-deployment
 spec:
-  replicas: 2
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: occupancy-app
@@ -11,21 +77,103 @@ spec:
     metadata:
       labels:
         app: occupancy-app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
     spec:
+      serviceAccountName: occupancy-sa
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: occupancy-app
+            topologyKey: kubernetes.io/hostname
       containers:
       - name: occupancy-container
         image: registrykln.azurecr.io/occupancy-project:v1
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
+        envFrom:
+        - configMapRef:
+            name: occupancy-config
+        - secretRef:
+            name: occupancy-secret
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+
 ---
+# =========================
+# Service
+# =========================
 apiVersion: v1
 kind: Service
 metadata:
   name: occupancy-service
 spec:
   type: ClusterIP
+  selector:
+    app: occupancy-app
   ports:
   - port: 80
     targetPort: 5000
-  selector:
-    app: occupancy-app
+
+---
+# =========================
+# Ingress
+# =========================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: occupancy-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - occupancy.example.com
+    secretName: occupancy-tls
+  rules:
+  - host: occupancy.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: occupancy-service
+            port:
+              number: 80
+
+---
+# =========================
+# Horizontal Pod Autoscale
